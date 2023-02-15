@@ -72,10 +72,24 @@ sub new($%) {
 
 }
 
+sub writestore($) {
+   
+   my $self=shift();
+
+   croak 'Wrong writestore call on non-persistant client' unless ($self->{persistent});
+
+   my $data={};
+   for (qw(access_token expires expires_in refresh_token token_type scope appid sid) {
+      $data->{$_}=$self->{$_};
+   }
+   return store $data, $self->{store};
+}
+
 sub auth {
 
    my $self=shift();
 
+   #Client-credentials for user-less anonymous connection
    if ($self->{grant_type} eq 'client_credentials') {
       my $r=$self->post($self->{auth},
          [client_id => $self->{appid},
@@ -83,8 +97,21 @@ sub auth {
           client_secret=> $self->{secret},
           grant_type => $self->{grant_type}
       ]);
-   }
 
+      unless ($r->is_success) {
+         croak "Authentication failure ".$r->decoded_content;
+      }
+
+      my $data=from_json($r->decoded_content);
+      for (keys %$data) {
+         $self->{$_}=$data->{$_};
+
+      }
+
+      $self->{expires}=(time + $data->{expires_in});
+      $self->writestore() if ($self->{presistent});
+      return $data->{access_token};
+   }
 
 }
 
