@@ -23,7 +23,7 @@ sub new($%) {
    my %args=@_;
 
    #This are our lwp-extended options
-   for (qw(appid secret auth grant_type scope persistent sid host store)) {
+   for (qw(appid secret auth grant_type scope persistent sid base store return_url)) {
       if (exists $args{$_}) {
          $internals{$_}= $args{$_};
          delete $args{$_};
@@ -38,11 +38,11 @@ sub new($%) {
 
    my $sid=$internals{sid};
 
-   $internals{host}='https://graph.microsoft.com/v1.0' unless(exists $internals{host}); 
-   $internals{host} =~ s/\/$//;
+   $internals{base}='https://graph.microsoft.com/v1.0' unless(exists $internals{base}); 
+   $internals{base} =~ s/\/$//;
 
    #complain about missing options
-   for (qw(appid secret grant_type)) {
+   for (qw(appid grant_type)) {
       croak "Missing mandatory option $_" unless (exists $internals{$_});
    }
 
@@ -79,10 +79,50 @@ sub writestore($) {
    croak 'Wrong writestore call on non-persistant client' unless ($self->{persistent});
 
    my $data={};
-   for (qw(access_token expires expires_in refresh_token token_type scope appid sid) {
+
+   #This is a subset of the runtime data. It's important that the secret is out
+   for (qw(access_token expires expires_in refresh_token token_type scope appid sid)) {
       $data->{$_}=$self->{$_};
    }
    return store $data, $self->{store};
+}
+
+sub request {
+
+   my ($self,$method, $url, $payload)=@_;
+
+   my $abs_uri=URI->new_abs($url, $self->{base});
+
+   my $req=HTTP::Request->new($method,"$abs_uri");
+   $req->header('Authorization' => "Bearer ".$self->{access_token});
+   $req->header('Content-Type' => 'application/json');
+   $req->header('Accept' => 'application/json');
+   $req->content(to_json($payload)) if ($payload);
+
+   my $res=SUPER::request($self,$req);
+
+   if ($res->is_success) {
+      my $data=from_json($res->decoded_content);
+      if (exists $data->{'@odata.nextLink'}) {
+         $self->{nextLink}=$data->{'@odata.nextLink'};
+      } else {
+         $self->{nextLink}=0;
+      }
+      return $data;
+   } else {
+      croak $res->decoded_content
+   }
+}
+
+sub next($) {
+
+   my $self=shift();
+
+   if ($self->{nextLink}) {
+      return $self->request('GET' => $self->{nextLink});
+   } else {
+      return 0;
+   }
 }
 
 sub auth {
@@ -110,6 +150,7 @@ sub auth {
 
       $self->{expires}=(time + $data->{expires_in});
       $self->writestore() if ($self->{presistent});
+      
       return $data->{access_token};
    }
 
