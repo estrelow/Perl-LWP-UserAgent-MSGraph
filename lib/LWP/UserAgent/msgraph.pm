@@ -3,7 +3,7 @@ package LWP::UserAgent::msgraph;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.04';
 
 use parent 'LWP::UserAgent';
 
@@ -26,7 +26,7 @@ sub new($%) {
    my %args=@_;
 
    #This are our lwp-extended options
-   for (qw(appid secret grant_type scope persistent sid base store return_url tenant)) {
+   for (qw(appid secret grant_type scope persistent sid base store return_url tenant local_port)) {
       if (exists $args{$_}) {
          $internals{$_}= $args{$_};
          delete $args{$_};
@@ -45,6 +45,9 @@ sub new($%) {
    $internals{base} =~ s/\/$//;
 
    $internals{console}=0 unless (exists $internals{console});
+
+   $internals{expires}=0;
+   $internals{local_port}=8081 unless ($internals{local_port});
 
    #complain about missing options
    for (qw(appid grant_type tenant)) {
@@ -172,7 +175,7 @@ sub consolecode($) {
 
    my $self=shift();
 
-   my $port=8081;
+   my $port=$self->{local_port};
    my $web=LWP::UserAgent::msgraph::srvauth->new($port);
 
    #Even if it's local, this redirect_uri must be Azure-registered
@@ -217,7 +220,7 @@ sub auth {
    #Client-credentials for user-less anonymous connection
    if ($self->{grant_type} eq 'client_credentials') {
 
-      my $post=HTTP::Request::Common::POST($self->tokenendpoint(),
+      $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
           scope => 'https://graph.microsoft.com/.default',
           client_secret=> $self->{secret},
@@ -231,7 +234,7 @@ sub auth {
       $code=$self->consolecode() unless ($code || ! $self->{console});
       croak 'Missing or invalid authorization code' unless ($code);
 
-      my $post=HTTP::Request::Common::POST($self->tokenendpoint(),
+      $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
           scope => $self->{scope},
           code => $code,
@@ -449,6 +452,30 @@ properly. Missing mandatory options will result in error
    tenant           Tenant id
    grant_type       Authorizations scheme (client_credentials,authorization_code)
    console          Indicates whether interaction with a user is possible
+   redirect_uri     Redirect URI for delegated auth challenge
+   local_port       tcp port for mini http server. Defaults to 8081
+
+=head1 auth
+
+   my $token = $ua->auth;             #For app credentiales            
+   my $token = $ua->auth($challenge); #For delegated authentication
+
+This method performs the authentication handshake sequence with the MS
+Graph platform. The optional parameter is the authorization code obtained
+from a challenge with the impersonated user. If this is an application only
+non-delegated client, then the $challenge is not needed.
+
+If used in a web application, you should have redirected the user to the L<authendpoint> location
+and then capture the resulting code listening for the redirect_uri.
+
+A special tweak is supplied for console applications with delegated authentication. In that case,
+if the code is missing, an http localhost miniserver is launched so the
+user can trigger the challenge himself. This behavior is activated via the console constructor option.
+The http miniserver is destroyed as soon as the authorization code arrives.
+In this case, the redirect_uri is automatically set. The miniserver listens by default on http://localhost:8081. 
+Please note that MS Graph allows
+the use of localhost in the redirect_uri and in that case SSL is not enforced. But still the
+localhost URL must be registered in Azure.
 
 =head1 request
 
