@@ -13,6 +13,7 @@ use Data::UUID;
 use File::Spec;
 use Storable;
 use Carp;
+use URI;
 use HTTP::Request::Common;
 
 sub new($%) {
@@ -24,7 +25,7 @@ sub new($%) {
    my %args=@_;
 
    #This are our lwp-extended options
-   for (qw(appid secret auth grant_type scope persistent sid base store return_url)) {
+   for (qw(appid secret grant_type scope persistent sid base store return_url tenant)) {
       if (exists $args{$_}) {
          $internals{$_}= $args{$_};
          delete $args{$_};
@@ -43,7 +44,7 @@ sub new($%) {
    $internals{base} =~ s/\/$//;
 
    #complain about missing options
-   for (qw(appid grant_type)) {
+   for (qw(appid grant_type tenant)) {
       croak "Missing mandatory option $_" unless (exists $internals{$_});
    }
 
@@ -82,7 +83,7 @@ sub writestore($) {
    my $data={};
 
    #This is a subset of the runtime data. It's important that the secret is out
-   for (qw(access_token expires expires_in refresh_token token_type scope appid sid)) {
+   for (qw(access_token expires expires_in refresh_token token_type scope appid sid redirect_uri)) {
       $data->{$_}=$self->{$_};
    }
    return store $data, $self->{store};
@@ -103,6 +104,7 @@ sub request {
 
    my $res=LWP::UserAgent::request($self,$req);
 
+   #Response code is a keeper
    $self->{code}=$res->code;
 
    if ($res->is_success) {
@@ -135,6 +137,30 @@ sub next($) {
    }
 }
 
+sub authendpoint($) {
+
+   my $self=shift();
+
+   #This is an ugly url. Must be used as a GET or a redirect location, so can't be done as POST
+   my $url=URI->new("https://login.microsoftonline.com/".$self->{tenant}."/oauth2/v2.0/authorize");
+
+   #query_param_append comes handy, but was introduced in URI 5.16
+   $url->query_param_append('client_id'     => $self->{appid});
+   $url->query_param_append('response_type' => 'code');
+   $url->query_param_append('redirect_uri'  => $self->{redirect_uri});
+   $url->query_param_append('response_mode' => 'query');
+   $url->query_param_append('scope'         => $self->{scope});
+   $url->query_param_append('state'         => $self->{sid});
+   return "$url";
+}
+
+sub tokenendpoint($) {
+
+   my $self=shift();
+   return "https://login.microsoftonline.com/".$self->{tenant}."/oauth2/v2.0/token";
+}
+
+
 sub auth {
 
    my $self=shift();
@@ -142,7 +168,7 @@ sub auth {
    #Client-credentials for user-less anonymous connection
    if ($self->{grant_type} eq 'client_credentials') {
 
-      my $post=HTTP::Request::Common::POST($self->{auth},
+      my $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
           scope => 'https://graph.microsoft.com/.default',
           client_secret=> $self->{secret},
@@ -227,12 +253,12 @@ version 0.01
 
    use LWP::UserAgent::msgraph;
 
-   #The XXXX, YYYY and ZZZZ are setup during the Azure App Registration
+   #The XXXX, YYYY and ZZZZ are from your Azure App Registration
    #Application Permission version
    $ua = LWP::UserAgent::msgraph->new(
       appid => 'XXXX',
       secret => 'YYYY',
-      auth => 'ZZZZ',
+      tenant => 'ZZZZ',
       grant_type => 'client_credentials');
    $joe=$ua->request(GET => '/users/jdoe@some.com');
    $dn=$joe->{displayName};
@@ -255,7 +281,7 @@ properly. Missing mandatory options will result in error
    -------          -----------------------------------
    appid            Application (client) ID
    secret           shared secret needed for handshake
-   auth             URL for oAuth 2.0 token endpoint
+   tenant           Tenant id
    grant_type       Authorizations scheme (client_credentials,authorization_code)
 
 =head1 request
@@ -283,6 +309,21 @@ code.
 
 The next() method will request additional response content after a previous
 request if a pagination result set happens.
+
+=head1 authendpoint
+
+   $location=$ua->authendpoint()
+
+Returns the authentication endpoint as an url string, full with the query part. In a delegated
+authentication mode, you should point the user to this url via a browser in order to get the proper
+authorization.
+
+=head1 tokenendpoint
+
+   $location=$ua->tokenendpoint()
+
+Returns the oauth 2.0 token endpoint as an url string. This url is used internally to get
+the authentication token.
 
 =head1 Changes from the default L<LWP::UserAgent> behavior
 
