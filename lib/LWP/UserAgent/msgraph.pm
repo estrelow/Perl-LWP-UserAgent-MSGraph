@@ -15,6 +15,7 @@ use Storable;
 use Carp;
 use URI;
 use HTTP::Request::Common;
+use Net::EmptyPort qw(listen_socket empty_port check_port);
 
 sub new($%) {
 
@@ -42,6 +43,8 @@ sub new($%) {
 
    $internals{base}='https://graph.microsoft.com/v1.0' unless(exists $internals{base}); 
    $internals{base} =~ s/\/$//;
+
+   $internals{console}=0 unless (exists $internals{console});
 
    #complain about missing options
    for (qw(appid grant_type tenant)) {
@@ -83,7 +86,7 @@ sub writestore($) {
    my $data={};
 
    #This is a subset of the runtime data. It's important that the secret is out
-   for (qw(access_token expires expires_in refresh_token token_type scope appid sid redirect_uri)) {
+   for (qw(access_token expires expires_in refresh_token token_type scope appid sid redirect_uri console)) {
       $data->{$_}=$self->{$_};
    }
    return store $data, $self->{store};
@@ -160,6 +163,34 @@ sub tokenendpoint($) {
    return "https://login.microsoftonline.com/".$self->{tenant}."/oauth2/v2.0/token";
 }
 
+sub sid($) {
+   my $self=shift();
+   return $self->{sid};
+}
+
+sub consolecode($) {
+
+   my $self=shift();
+   my $web=LWP::UserAgent::msgraph::srvauth->new(8081);
+
+   my $socket=listen_socket();
+   $web->setcaller($self, $socket->sockport);
+   my $pid=$web->background();
+
+   while(1) {
+
+      my $client=$socket->accept();
+      my $data="";
+      $client->recv($data,1024);
+      my ($id,$code)=split /\s/, $data;
+
+      if ($id eq $self->sid) {
+         return $code;
+      } else {
+         return 0;
+      }
+   }
+}
 
 sub auth {
 
@@ -234,6 +265,76 @@ sub delete {
    return $self->request('DELETE',@params);
 
 }
+
+package LWP::UserAgent::msgraph::srvauth;
+use base 'HTTP::Server::Simple::CGI';
+use HTTP::Server::Simple::CGI;
+use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
+
+sub setcaller($$$) {
+   
+   my $self=shift();
+   my $ms=shift();
+   my $port=shift();
+
+   $self->{'caller'}=$ms;
+   $self->{'callerport'}=$port;
+   return 1;
+}
+
+sub sendcode($$) {
+
+   my ($self,$code)=@_;
+
+   my $client =  IO::Socket->new(
+    Domain => AF_INET,
+    Type => SOCK_STREAM,
+    proto => 'tcp',
+    PeerPort => $self->{callerport},
+    PeerHost => '0.0.0.0',
+       ) || die "Can't open socket: $IO::Socket::errstr";
+
+    $client->send($self->{'caller'}->sid.' '.$code);
+    $client->shutdown(SHUT_WR);
+    $client->close();
+}
+
+sub handle_request {
+    my $self = shift;
+    my $cgi  = shift;
+   
+    my $path = $cgi->request_uri();
+ 
+    if ($path =~  "^/auth" ) {
+        print "HTTP/1.0 200 OK\r\n";
+        print $cgi->header('text/plain');
+        my $code=$cgi->param('code');
+        $self->sendcode($code);
+        print "Authentication ok. You can close this window now.";
+         
+        exit 0;
+    } elsif ($path =~  "^/start" ) {
+        print "HTTP/1.0 302 Redirected\r\n";
+        print $cgi->redirect($self->{'caller'}->authendpoint());
+    } 
+    else {
+        print "HTTP/1.0 404 Not found\r\n";
+        print $cgi->header,
+              $cgi->start_html('Not found'),
+              $cgi->h1('Not found'),
+              $cgi->end_html;
+    }
+}
+
+sub print_banner($) {
+   my $self=shift();
+
+   my $url="http://localhost:".$self->port()."/start";
+   print "Authentication required.\nOpen your browser at $url\n";
+
+}
+
+
 
 1;
 
@@ -325,7 +426,10 @@ authorization.
 Returns the oauth 2.0 token endpoint as an url string. This url is used internally to get
 the authentication token.
 
-=head1 Changes from the default L<LWP::UserAgent> behavior
+=head1 Changes from the default LWP::UserAgent behavior
+
+This class inherits from L<LWP::UserAgent>, but some changes apply. If you are used to
+LWP::UserAgent standart tweaks and shortcuts, you should read this.
 
 The L<request> now accepts a perl structure which will be sent 
 as a JSON body to the MS Graph endoint. Instead of an L<HTTP::Respones>
