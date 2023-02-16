@@ -171,30 +171,48 @@ sub sid($) {
 sub consolecode($) {
 
    my $self=shift();
-   my $web=LWP::UserAgent::msgraph::srvauth->new(8081);
 
+   my $port=8081;
+   my $web=LWP::UserAgent::msgraph::srvauth->new($port);
+
+   #Even if it's local, this redirect_uri must be Azure-registered
+   $self->{redirect_uri}="http://localhost:$port/auth";
+
+   #In order to setup a well-behaved http mini-server, we launch the server as a separate background
+   #process using the HTTP::Server::Simple module.
+   #Since this will be a separate process, and we need the authorization code value, we setup a 
+   #private listening socket so the child process can upload the code to us
    my $socket=listen_socket();
    $web->setcaller($self, $socket->sockport);
    my $pid=$web->background();
 
-   while(1) {
+   my $client=$socket->accept();
+   my $data="";
+   $client->recv($data,1024);
 
-      my $client=$socket->accept();
-      my $data="";
-      $client->recv($data,1024);
-      my ($id,$code)=split /\s/, $data;
+   my ($id,$code)=split /\s/, $data;
 
-      if ($id eq $self->sid) {
-         return $code;
-      } else {
-         return 0;
-      }
+   #Our session id is sent as the optional 'state' parameter
+   #This value comes back to us along with the authorization code
+   #Here, we honour the state value validation. If the state value
+   #is not a match, the authorization code is discarded
+  if ($id && $id eq $self->sid) {
+      print "Authorization code received. You can close the browser now\n";
+      return $code;
+   } else {
+      return 0;
    }
 }
 
 sub auth {
 
    my $self=shift();
+
+   my $post;
+
+   #Here comes the authentication handshake with the MS Graph platform
+   #This is all spoken in application/x-www-form-urlencoded, so we use
+   #the standard simple_request and HTTP::Request approach
 
    #Client-credentials for user-less anonymous connection
    if ($self->{grant_type} eq 'client_credentials') {
@@ -205,23 +223,44 @@ sub auth {
           client_secret=> $self->{secret},
           grant_type => $self->{grant_type}
       ]);
-      my $r=$self->simple_request($post);
-      unless ($r->is_success) {
-         croak "Authentication failure ".$r->decoded_content;
-      }
 
-      my $data=from_json($r->decoded_content);
-      for (keys %$data) {
-         $self->{$_}=$data->{$_};
-      }
+   #Delegated authorization for user-oriented interaction
+   } elsif ($self->{grant_type} eq 'authorization_code') {
 
-      $self->{expires}=(time + $data->{expires_in});
-      $self->writestore() if ($self->{presistent});
-      $self->default_header('Authorization' => "Bearer ".$self->{access_token});
-     
-      return $data->{access_token};
+      my $code=shift();
+      $code=$self->consolecode() unless ($code || ! $self->{console});
+      croak 'Missing or invalid authorization code' unless ($code);
+
+      my $post=HTTP::Request::Common::POST($self->tokenendpoint(),
+         [client_id => $self->{appid},
+          scope => $self->{scope},
+          code => $code,
+          redirect_uri => $self->{redirect_uri},
+          client_secret=> $self->{secret},
+          grant_type => $self->{grant_type}
+      ]);
+
+   } else {
+      croak 'Missing or unsupported grant_type';
    }
 
+   croak 'Authentication scheme error' unless ($post);
+   
+   my $r=$self->simple_request($post);
+   unless ($r->is_success) {
+      croak "Authentication failure ".$r->decoded_content;
+   }
+
+   my $data=from_json($r->decoded_content);
+   for (keys %$data) {
+      $self->{$_}=$data->{$_};
+   }
+
+   $self->{expires}=(time + $data->{expires_in});
+   $self->writestore() if ($self->{presistent});
+   $self->default_header('Authorization' => "Bearer ".$self->{access_token});
+  
+   return $data->{access_token};
 }
 
 sub get {
@@ -271,34 +310,52 @@ use base 'HTTP::Server::Simple::CGI';
 use HTTP::Server::Simple::CGI;
 use IO::Socket qw(AF_INET AF_UNIX SOCK_STREAM SHUT_WR);
 
+sub valid_http_method($$) {
+
+   my ($self,$method)=@_;
+   return ($method eq 'GET');
+}
 sub setcaller($$$) {
    
    my $self=shift();
    my $ms=shift();
    my $port=shift();
 
-   $self->{'caller'}=$ms;
+   $self->{'code_uri'}=$ms->authendpoint();
    $self->{'callerport'}=$port;
    return 1;
 }
 
-sub sendcode($$) {
+sub sendcode($$$) {
 
-   my ($self,$code)=@_;
+   my ($self,$code,$state)=@_;
 
    my $client =  IO::Socket->new(
     Domain => AF_INET,
     Type => SOCK_STREAM,
     proto => 'tcp',
     PeerPort => $self->{callerport},
-    PeerHost => '0.0.0.0',
+    PeerHost => '127.0.0.1',
        ) || die "Can't open socket: $IO::Socket::errstr";
 
-    $client->send($self->{'caller'}->sid.' '.$code);
+    $client->send($state.' '.$code);
     $client->shutdown(SHUT_WR);
     $client->close();
 }
 
+#Here we setup a minimal web server response behavior
+#The only verbs allowed are:
+#   GET /start  ==> does a 302 redirect to the MS authorization platform
+#   GET /auth   ==> receives the authorization code in the query string
+#
+# This two methods performs an MS challenge to the end-user
+#
+# Note that depending on your particular browser state, there could be 
+# a valid MS tenant session already logged in with this app previously
+# authorized. In that case, the user doesn't get the login challenge
+# and the only thing the browser performs is a series of redirects
+# In that case, the authorization code get to us in a blink-you-missed-it
+# fashion
 sub handle_request {
     my $self = shift;
     my $cgi  = shift;
@@ -307,15 +364,17 @@ sub handle_request {
  
     if ($path =~  "^/auth" ) {
         print "HTTP/1.0 200 OK\r\n";
-        print $cgi->header('text/plain');
+        my $msg="Authentication ok. You can close this window now.\n";
+        print $cgi->header(-type=>'text/plain', -Content_length => length($msg));
         my $code=$cgi->param('code');
-        $self->sendcode($code);
-        print "Authentication ok. You can close this window now.";
+        my $state=$cgi->param('state');
+        $self->sendcode($code,$state);
+        print $msg;
          
         exit 0;
     } elsif ($path =~  "^/start" ) {
         print "HTTP/1.0 302 Redirected\r\n";
-        print $cgi->redirect($self->{'caller'}->authendpoint());
+        print $cgi->redirect($self->{'code_uri'});
     } 
     else {
         print "HTTP/1.0 404 Not found\r\n";
@@ -370,6 +429,11 @@ This module allows the interaction between Perl and the MS Graph API service.
 Therefore, a MS Graph application can be built using Perl. The application must
 be correctly registered within Azure with the proper persmissions.
 
+This module has the glue for the needed authentication scheme and the JSON
+serialization so a conversation can be established with MS Graph. This is only
+middleware. No higher level object abstraction is provided for the MS Graph
+object data.
+
 =head1 CONSTRUCTOR
 
    my $ua=LWP::UserAgent->new(%options);
@@ -384,6 +448,7 @@ properly. Missing mandatory options will result in error
    secret           shared secret needed for handshake
    tenant           Tenant id
    grant_type       Authorizations scheme (client_credentials,authorization_code)
+   console          Indicates whether interaction with a user is possible
 
 =head1 request
 
@@ -417,7 +482,7 @@ request if a pagination result set happens.
 
 Returns the authentication endpoint as an url string, full with the query part. In a delegated
 authentication mode, you should point the user to this url via a browser in order to get the proper
-authorization.
+authorization. This is on offline method, the resulting uri is computed from the constructor options
 
 =head1 tokenendpoint
 
