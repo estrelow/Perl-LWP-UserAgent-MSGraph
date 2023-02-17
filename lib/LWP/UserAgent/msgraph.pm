@@ -3,7 +3,7 @@ package LWP::UserAgent::msgraph;
 use strict;
 use warnings;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use parent 'LWP::UserAgent';
 
@@ -410,21 +410,32 @@ LWP::UserAgent::msgraph
 
 =head1 VERSION
 
-version 0.01
+version 0.05
 
 =head1 SYNOPSIS
 
    use LWP::UserAgent::msgraph;
 
    #The XXXX, YYYY and ZZZZ are from your Azure App Registration
+
    #Application Permission version
    $ua = LWP::UserAgent::msgraph->new(
       appid => 'XXXX',
       secret => 'YYYY',
       tenant => 'ZZZZ',
       grant_type => 'client_credentials');
-   $joe=$ua->request(GET => '/users/jdoe@some.com');
-   $dn=$joe->{displayName};
+
+   #Delegated authentication version
+   $ua = LWP::UserAgent::msgraph->new(   
+      appid => 'XXXX',
+      secret => 'YYYY',
+      tenant => 'ZZZZ',
+      grant_type=> 'authorization_code',
+      scope => 'openid user.read');
+    $ua->auth($code_obtained_from_challenge);
+
+   $joe = $ua->request(GET => '/users/jdoe@some.com');
+   $dn = $joe->{displayName};
 
 =head1 DESCRIPTION  
 
@@ -433,7 +444,7 @@ Therefore, a MS Graph application can be built using Perl. The application must
 be correctly registered within Azure with the proper persmissions.
 
 This module has the glue for the needed authentication scheme and the JSON
-serialization so a conversation can be established with MS Graph. This is only
+serialization so a conversation can be established with MS Graph. This is just
 middleware. No higher level object abstraction is provided for the MS Graph
 object data.
 
@@ -462,10 +473,10 @@ properly. Missing mandatory options will result in error
 
 This method performs the authentication handshake sequence with the MS
 Graph platform. The optional parameter is the authorization code obtained
-from a challenge with the impersonated user. If this is an application only
+from a challenge with the impersonated user. If this is an application 
 non-delegated client, then the $challenge is not needed.
 
-If used in a web application, you should have redirected the user to the L<authendpoint> location
+If used in a web application, you should have redirected the user to the authendpoint() location
 and then capture the resulting code listening for the redirect_uri.
 
 A special tweak is supplied for console applications with delegated authentication. In that case,
@@ -487,7 +498,7 @@ corresponding response object. An optional perl structure might be
 supplied as the payload (body) for the request.
 
 The MS Graph has a rich set of API calls for different operations. Check the
-L<EXAMPLES> section for more tips.
+EXAMPLES section for more tips.
 
 =head1 code
 
@@ -523,10 +534,10 @@ the authentication token.
 This class inherits from L<LWP::UserAgent>, but some changes apply. If you are used to
 LWP::UserAgent standart tweaks and shortcuts, you should read this.
 
-The L<request> now accepts a perl structure which will be sent 
-as a JSON body to the MS Graph endoint. Instead of an L<HTTP::Respones>
+The request() method accepts a perl structure which will be sent 
+as a JSON body to the MS Graph endoint. Instead of an L<HTTP::Response>
 object, request() will return whatever object is returned by the
-MS Graph method, as a perl structure. The <JSON> module is used as
+MS Graph method, as a perl structure. The L<JSON> module is used as
 a serialization engine.
 
 request() will use the right Authorization header based on the initial handshake.
