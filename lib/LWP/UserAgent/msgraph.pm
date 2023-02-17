@@ -76,7 +76,9 @@ sub new($%) {
    for (keys %internals) {
       $self->{$_} = $internals{$_};
    }
-   $self->default_header('Authorization' => "Bearer ".$internals{access_token}) if (exists $internals{access_token} );
+
+   #We adopt a previous token if there was any
+   $self->default_header('Authorization' => "Bearer ".$internals{access_token}) if ($internals{persistent} && exists $internals{access_token} );
 
    return $self;
 
