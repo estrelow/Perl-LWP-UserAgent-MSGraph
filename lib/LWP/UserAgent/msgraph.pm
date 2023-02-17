@@ -63,6 +63,7 @@ sub new($%) {
       $internals{store}="$tmpdir/$sid.tmp";
    }
 
+   #We retrieve previous stored runtime data if we persist
    if ($internals{persistent} && -r $internals{store}) {
       my $stored=retrieve($internals{store});
       croak 'Mismatch persistent session' unless ($stored->{sid} eq $sid);
@@ -75,6 +76,7 @@ sub new($%) {
    for (keys %internals) {
       $self->{$_} = $internals{$_};
    }
+   $self->default_header('Authorization' => "Bearer ".$internals{access_token}) if (exists $internals{access_token} );
 
    return $self;
 
@@ -94,6 +96,7 @@ sub writestore($) {
    }
    return store $data, $self->{store};
 }
+
 
 sub request {
 
@@ -263,6 +266,8 @@ sub auth {
    $self->writestore() if ($self->{presistent});
    $self->default_header('Authorization' => "Bearer ".$self->{access_token});
   
+   $self->writestore() if ($self->{persistent});
+
    return $data->{access_token};
 }
 
@@ -462,6 +467,7 @@ properly. Missing mandatory options will result in error
    secret           shared secret needed for handshake
    tenant           Tenant id
    grant_type       Authorizations scheme (client_credentials,authorization_code)
+   scope            List of permissions requested as in 'perm1 perm2 perm3...'
    console          Indicates whether interaction with a user is possible
    redirect_uri     Redirect URI for delegated auth challenge
    local_port       tcp port for mini http server. Defaults to 8081
