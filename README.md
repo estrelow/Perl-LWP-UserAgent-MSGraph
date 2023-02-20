@@ -16,6 +16,9 @@ TODO
 - Document the http server auxiliary class
 - Add a tweak so the :content requests will accept a redirect
 - Add support for the certificate auth
+- Add support for refresh-token
+- Include the session persistance doc
+- Add the app_data option
 
 BUGS - FEEDBACK
 
