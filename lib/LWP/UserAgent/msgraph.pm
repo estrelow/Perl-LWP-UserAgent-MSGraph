@@ -3,7 +3,7 @@ package LWP::UserAgent::msgraph;
 use strict;
 use warnings;
 
-our $VERSION = '0.05';
+our $VERSION = '0.11';
 
 use parent 'LWP::UserAgent';
 
@@ -84,21 +84,55 @@ sub new($%) {
 
 }
 
-sub writestore($) {
-   
+sub storedata($) {
+
    my $self=shift();
-
-   croak 'Wrong writestore call on non-persistant client' unless ($self->{persistent});
-
    my $data={};
 
    #This is a subset of the runtime data. It's important that the secret is out
    for (qw(access_token expires expires_in refresh_token token_type scope appid sid redirect_uri console)) {
       $data->{$_}=$self->{$_};
    }
-   return store $data, $self->{store};
+
+   return $data;
 }
 
+sub session_dump($) {
+   
+   my $self=shift();
+
+   return to_json($self->storedata());
+}
+
+sub session_restore($$) {
+
+   my $self=shift();
+   my $json=shift();
+
+   my $data=from_json($json);
+
+   for (qw(access_token expires expires_in refresh_token token_type scope appid sid redirect_uri console)) {
+      $self->{$_}=$data->{$_};
+   }
+
+   return $self;
+}
+
+sub writestore($) {
+   
+   my $self=shift();
+
+   croak 'Wrong writestore call on non-persistant client' unless ($self->{persistent});
+
+   return store $self->storedata(), $self->{store};
+}
+
+sub newtoken($) {
+
+   my $self=shift();
+   $self->auth();
+
+}
 
 sub request {
 
@@ -107,6 +141,10 @@ sub request {
    $url =~ s/^\///;
 
    my $abs_uri=URI->new_abs($url, $self->{base}.'/');
+
+   if ($self->{expires} < time()) {
+      $self->newtoken();
+   }
 
    my $req=HTTP::Request->new($method,"$abs_uri");
    $req->header('Content-Type' => 'application/json');
@@ -119,13 +157,20 @@ sub request {
    $self->{code}=$res->code;
 
    if ($res->is_success) {
-      my $data=from_json($res->decoded_content);
-      if (exists $data->{'@odata.nextLink'}) {
-         $self->{nextLink}=$data->{'@odata.nextLink'};
-      } else {
-         $self->{nextLink}=0;
-      }
-      return $data;
+      if ($res->header('content-type') =~ /^application\/json/) {
+         
+         my $data=from_json($res->decoded_content);
+
+         #Here we save the nextLink for further use
+         if (exists $data->{'@odata.nextLink'}) {
+            $self->{nextLink}=$data->{'@odata.nextLink'};
+         } else {
+            $self->{nextLink}=0;
+         }
+         return $data;
+     } else {
+        return $res;
+     }
    } else {
       croak $res->decoded_content
    }
@@ -417,7 +462,7 @@ LWP::UserAgent::msgraph
 
 =head1 VERSION
 
-version 0.05
+version 0.11
 
 =head1 SYNOPSIS
 
@@ -483,6 +528,9 @@ This method performs the authentication handshake sequence with the MS
 Graph platform. The optional parameter is the authorization code obtained
 from a challenge with the impersonated user. If this is an application 
 non-delegated client, then the $challenge is not needed.
+
+The challenge code is not kept, but the token is. The token is saved for future requests. 
+This method returns the token obtained.
 
 If used in a web application, you should have redirected the user to the authendpoint() location
 and then capture the resulting code listening for the redirect_uri.
