@@ -40,14 +40,18 @@ under sub ($c) {
 
      my $sid=$c->param('session');
      
+     #Here we create an MS Graph environment for every Mojo request
+     #The persistent flag and session param allows to reuse the
+     #same environment in further Mojo requests
      $ms=LWP::UserAgent::msgraph->new(
       appid => APPID,
       secret => SECRET,
       tenant => TENANT,
       grant_type=> 'authorization_code',
-      scope => 'openid user.read profile',
+      scope => 'openid User.Read.All',
       redirect_uri=>HTTP_HOME."/auth",
-      sid => $sid);
+      sid => $sid,
+      persistent => 1  );
 };
 
 get '/' => sub ($c) {
@@ -63,9 +67,34 @@ get '/auth' => sub($c) {
 
 get '/view' => sub($c) {
 
-   $c->render(text => 'Hello world '.$c->param('session'));
+   my $list=$ms->get('/users?$select=id,displayname&$filter=userType eq \'Member\'&$top='.MAX_FACES);
+
+   my $s='';
+   for (@{$list->{value}}) {
+      $s= "$s ".$_->{displayName};
+   }
+   $c->render(template => 'default', grid => $s);
    
 };
 
 
 app->start('daemon','-l', HTTP_HOME);
+
+__DATA__
+
+@@default.html.ep
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <meta name="Generator" content="EditPlus">
+  <meta name="Author" content="">
+  <meta name="Keywords" content="">
+  <meta name="Description" content="">
+  <title>Document</title>
+ </head>
+ <body>
+  Hello world <%= $grid  %>
+ </body>
+</html>
+
