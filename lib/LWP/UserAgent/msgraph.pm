@@ -26,7 +26,7 @@ sub new($%) {
    my %args=@_;
 
    #This are our lwp-extended options
-   for (qw(appid secret grant_type scope persistent sid base store return_url tenant local_port)) {
+   for (qw(appid secret grant_type scope persistent sid base store redirect_uri tenant local_port)) {
       if (exists $args{$_}) {
          $internals{$_}= $args{$_};
          delete $args{$_};
@@ -205,7 +205,7 @@ sub authendpoint($) {
    $url->query_param_append('response_type' => 'code');
    $url->query_param_append('redirect_uri'  => $self->{redirect_uri});
    $url->query_param_append('response_mode' => 'query');
-   $url->query_param_append('scope'         => $self->{scope});
+   $url->query_param_append('scope'         => 'https://graph.microsoft.com/.default');
    $url->query_param_append('state'         => $self->{sid});
    return "$url";
 }
