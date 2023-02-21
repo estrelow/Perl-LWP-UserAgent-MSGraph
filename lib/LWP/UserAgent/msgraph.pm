@@ -34,7 +34,7 @@ sub new($%) {
    }
 
    #Some defaults
-   unless (exists $internals{sid}) {
+   unless (exists $internals{sid} && defined $internals{sid}) {
       my $guid=Data::UUID->new;
       $internals{sid}=$guid->create_str();
    }
