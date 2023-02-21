@@ -272,7 +272,7 @@ sub auth {
 
       $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
-          scope => 'https://graph.microsoft.com/.default',
+          scope => $self->{scope},
           client_secret=> $self->{secret},
           grant_type => $self->{grant_type}
       ]);
@@ -284,6 +284,7 @@ sub auth {
       $code=$self->consolecode() unless ($code || ! $self->{console});
       croak 'Missing or invalid authorization code' unless ($code);
 
+      print "Using scope ".$self->{scope}."\n";
       $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
           scope => $self->{scope},
