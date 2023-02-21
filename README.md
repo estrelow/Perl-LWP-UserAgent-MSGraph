@@ -19,6 +19,8 @@ TODO
 - Add support for refresh-token
 - Include the session persistance doc
 - Add the app_data option
+- Add the download method
+- Document about error handling
 
 BUGS - FEEDBACK
 
