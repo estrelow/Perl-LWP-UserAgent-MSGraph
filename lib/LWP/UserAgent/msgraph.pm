@@ -115,6 +115,7 @@ sub session_restore($$) {
       $self->{$_}=$data->{$_};
    }
 
+   $self->default_header('Authorization' => "Bearer ".$self->{access_token});
    return $self;
 }
 
@@ -127,11 +128,46 @@ sub writestore($) {
    return store $self->storedata(), $self->{store};
 }
 
+sub refreshtoken($) {
+
+   my $self=shift();
+
+   my $ua = LWP::UserAgent->new;
+   my $r=$ua->post('https://login.microsoftonline.com/organizations/oauth2/v2.0/token',
+      [client_id=>$self->{appid},
+       scope=>$self->{scope},
+       refresh_token=>$self->{refresh_token},
+       redirect_uri=> $self->{redirect_uri},
+       grant_type=>'refresh_token',
+       client_secret=>$self->{secret} ]);
+   if ($r->is_success) {
+      my $data=decode_json($r->decoded_content);
+      my $token=$data->{access_token};      
+
+      for (keys %$data) {
+         $self->{$_}=$data->{$_};
+      }
+
+      $self->{expires}=(time + $data->{expires_in});
+      $self->writestore() if ($self->{presistent});
+      $self->default_header('Authorization' => "Bearer ".$token);
+  
+      $self->writestore() if ($self->{persistent});
+      return $token;
+    } else {
+      croak "Refresh token auth fail";
+    }      
+}
+
 sub newtoken($) {
 
    my $self=shift();
-   $self->auth();
 
+   if ($self->{refresh_token}) {
+      return $self->refreshtoken;
+   } else {
+      return $self->auth();
+   }
 }
 
 sub request {
@@ -205,7 +241,7 @@ sub authendpoint($) {
    $url->query_param_append('response_type' => 'code');
    $url->query_param_append('redirect_uri'  => $self->{redirect_uri});
    $url->query_param_append('response_mode' => 'query');
-   $url->query_param_append('scope'         => 'https://graph.microsoft.com/.default');
+   $url->query_param_append('scope'         => $self->{scope});
    $url->query_param_append('state'         => $self->{sid});
    return "$url";
 }
