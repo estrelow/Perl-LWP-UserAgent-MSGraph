@@ -3,7 +3,7 @@ package LWP::UserAgent::msgraph;
 use strict;
 use warnings;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 use parent 'LWP::UserAgent';
 
@@ -320,7 +320,7 @@ sub auth {
       $code=$self->consolecode() unless ($code || ! $self->{console});
       croak 'Missing or invalid authorization code' unless ($code);
 
-      print "Using scope ".$self->{scope}."\n";
+      #print "Using scope ".$self->{scope}."\n";
       $post=HTTP::Request::Common::POST($self->tokenendpoint(),
          [client_id => $self->{appid},
           scope => $self->{scope},
@@ -499,7 +499,7 @@ LWP::UserAgent::msgraph
 
 =head1 VERSION
 
-version 0.11
+version 0.12
 
 =head1 SYNOPSIS
 
